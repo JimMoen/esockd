@@ -95,6 +95,5 @@ check(Tokens, Now, Bucket = #bucket{rate   = Rate,
             {0, Bucket#bucket{tokens = Limit - Tokens, time = Now}};
         false -> %% Tokens not enough
             Pause = round(max(Tokens - Limit, 1) * 1000 / Rate),
-            {Pause, Bucket#bucket{tokens = 0, time = Now}}
+            {Pause, Bucket#bucket{tokens = 0, time = Now + Pause}}
     end.
-
