@@ -49,7 +49,7 @@ new(Rate, Burst) when is_integer(Burst), 0 < Rate andalso Rate =< Burst ->
     #bucket{rate   = Rate,
             burst  = Burst,
             tokens = Burst,
-            time   = erlang:system_time(milli_seconds)
+            time   = erlang:system_time(millisecond)
            }.
 
 -spec(info(bucket()) -> map()).
@@ -82,7 +82,7 @@ info(#bucket{rate = Rate, burst = Burst, tokens = Tokens, time = Lastime}) ->
 %% consumed by a multiplier (e.g., 1000) to improve accuracy.
 -spec(check(pos_integer(), bucket()) -> {non_neg_integer(), bucket()}).
 check(Tokens, Bucket) ->
-    check(Tokens, erlang:system_time(milli_seconds), Bucket).
+    check(Tokens, erlang:system_time(millisecond), Bucket).
 
 -spec(check(pos_integer(), integer(), bucket()) -> {non_neg_integer(), bucket()}).
 check(Tokens, Now, Bucket = #bucket{rate   = Rate,
