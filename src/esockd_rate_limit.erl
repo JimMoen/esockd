@@ -49,7 +49,7 @@ new(Rate, Burst) when is_integer(Burst), 0 < Rate andalso Rate =< Burst ->
     #bucket{rate   = Rate,
             burst  = Burst,
             tokens = Burst,
-            time   = erlang:system_time(milli_seconds)
+            time   = erlang:system_time(millisecond)
            }.
 
 -spec(info(bucket()) -> map()).
@@ -64,9 +64,25 @@ info(#bucket{rate = Rate, burst = Burst, tokens = Tokens, time = Lastime}) ->
 %% if Tokens < Limit => P = 0;
 %% if Tokens = Limit => P = 1/r;
 %% if Tokens > Limit => P = (Tokens-Limit)/r
+%% --------------------------------------------------------------------
+%% Note on accuracy:
+%% If the time difference between two checks is very short,
+%% the number of tokens generated during that time difference may be a decimal less than 1.
+%% and round(TokenSum) would round up.
+%%
+%% For example:
+%% At a token generation rate of 50T/s, only 0.5 tokens can be generated in 10ms.
+%% RealLimit
+%%     = min(Burst, Remaining + round((Rate * (Now - Lastime)) / 1000))
+%%     = min(50, 0 + round(0.5))
+%%     = 1
+%% To ensure accuracy, ensure that at least 1 token is generated in 1ms.
+%%
+%% You can multiply both the token generation rate and the number of tokens
+%% consumed by a multiplier (e.g., 1000) to improve accuracy.
 -spec(check(pos_integer(), bucket()) -> {non_neg_integer(), bucket()}).
 check(Tokens, Bucket) ->
-    check(Tokens, erlang:system_time(milli_seconds), Bucket).
+    check(Tokens, erlang:system_time(millisecond), Bucket).
 
 -spec(check(pos_integer(), integer(), bucket()) -> {non_neg_integer(), bucket()}).
 check(Tokens, Now, Bucket = #bucket{rate   = Rate,
@@ -79,6 +95,5 @@ check(Tokens, Now, Bucket = #bucket{rate   = Rate,
             {0, Bucket#bucket{tokens = Limit - Tokens, time = Now}};
         false -> %% Tokens not enough
             Pause = round(max(Tokens - Limit, 1) * 1000 / Rate),
-            {Pause, Bucket#bucket{tokens = 0, time = Now}}
+            {Pause, Bucket#bucket{tokens = 0, time = Now + Pause}}
     end.
-

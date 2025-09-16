@@ -1,7 +1,9 @@
 %%-*- mode: erlang; -*-
 
-{"5.8.12",
-  [{"5.8.11",
+{"5.8.13",
+  [{"5.8.12",
+    [{load_module,esockd_rate_limit,brutal_purge,soft_purge,[]}]},
+   {"5.8.11",
     [{load_module,esockd_listener_sup,brutal_purge,soft_purge,[]}]},
    {"5.8.10",
     [{load_module,esockd_listener_sup,brutal_purge,soft_purge,[]},
@@ -44,7 +46,9 @@
     ]},
    {<<".*">>, []}
   ],
-  [{"5.8.11",
+  [{"5.8.12",
+    [{load_module,esockd_rate_limit,brutal_purge,soft_purge,[]}]},
+   {"5.8.11",
     [{load_module,esockd_listener_sup,brutal_purge,soft_purge,[]}]},
    {"5.8.10",
     [{load_module,esockd_listener_sup,brutal_purge,soft_purge,[]},
