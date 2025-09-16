@@ -33,7 +33,7 @@ t_info(_) ->
                    burst  := 10000,
                    tokens := 10000
                   }, Info),
-    ?assert(erlang:system_time(milli_seconds) >= maps:get(time, Info)).
+    ?assert(erlang:system_time(millisecond) >= maps:get(time, Info)).
 
 %% for compatibility
 %% Rates with a precision below 1000 may cause unexpected behavior
