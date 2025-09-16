@@ -21,17 +21,17 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(MS, 1_000).
--define(wrap(X), (X * 1_000)).
+-define(MS, 1000).
+-define(wrap(X), (X * 1000)).
 
 all() -> esockd_ct:all(?MODULE).
 
 t_info(_) ->
-    Rl = esockd_rate_limit:new({1_000, 10_000}),
+    Rl = esockd_rate_limit:new({1000, 10000}),
     Info = esockd_rate_limit:info(Rl),
-    ?assertMatch(#{rate   := 1_000,
-                   burst  := 10_000,
-                   tokens := 10_000
+    ?assertMatch(#{rate   := 1000,
+                   burst  := 10000,
+                   tokens := 10000
                   }, Info),
     ?assert(erlang:system_time(milli_seconds) >= maps:get(time, Info)).
 
@@ -60,7 +60,7 @@ t_check_old(_) ->
     %% LastPause = (Tokens-Limit)/r = 5000ms
     %% This PauseTo should be 6000ms
     {P1, Rl3} = esockd_rate_limit:check(5, Rl2),
-    ?assertEqual(P1, 5_000 + P0),
+    ?assertEqual(P1, 5000 + P0),
     #{tokens := 0} = esockd_rate_limit:info(Rl3),
 
     ok = timer:sleep(1000),
@@ -75,14 +75,14 @@ t_check(_) ->
     Rl = esockd_rate_limit:new({TokensPerSecond, BurstTokens}),
 
     %% ====================
-    ?assertMatch(#{tokens := 10_000}, esockd_rate_limit:info(Rl)),
+    ?assertMatch(#{tokens := 10000}, esockd_rate_limit:info(Rl)),
     %% less than burst, no pause, 5000 tokens left
-    {0, Rl1} = esockd_rate_limit:check(5_000, Rl),
-    ?assertMatch(#{tokens := 5_000}, esockd_rate_limit:info(Rl1)),
+    {0, Rl1} = esockd_rate_limit:check(5000, Rl),
+    ?assertMatch(#{tokens := 5000}, esockd_rate_limit:info(Rl1)),
 
     %% ====================
     ok = timer:sleep(1),
-    {0, Rl2} = esockd_rate_limit:check(5_000, Rl1),
+    {0, Rl2} = esockd_rate_limit:check(5000, Rl1),
     #{tokens := T0} = esockd_rate_limit:info(Rl2),
     %% Consumed the rest 5000 tokens, and few tokens generated during 1ms sleep
     %% So the remaining tokens should be a value greater than 0.
@@ -94,20 +94,20 @@ t_check(_) ->
     %% comuse the rest tokens (T0),
     %% and should pause for the missing token generation time
     %% P = (abs(T0 - ComusedTokens))/r
-    {P1, Rl3} = esockd_rate_limit:check(5_000, Rl2),
+    {P1, Rl3} = esockd_rate_limit:check(5000, Rl2),
     #{tokens := T1} = esockd_rate_limit:info(Rl3),
     %% Give an execution time deviation 2ms, Real PauseTo = abs(T0 - 5000) - 2
     %% And no tokens left
-    ?assert((5_000 - T0 - 2 =< P1) andalso (P1 =< (5_000 - T0))),
+    ?assert((5000 - T0 - 2 =< P1) andalso (P1 =< (5000 - T0))),
     ?assertEqual(0, T1),
 
     %% ====================
     Sleep = 1000,
     ok = timer:sleep(Sleep),
     %% P = (Tokens-Limit)/r = 1000ms
-    {P2, _} = esockd_rate_limit:check(2_000, Rl3),
+    {P2, _} = esockd_rate_limit:check(2000, Rl3),
 
-    PauseTo = P1 - Sleep + 2_000,
+    PauseTo = P1 - Sleep + 2000,
     %% allow +-2ms deviation
     ?assert(((PauseTo - 2) =< P2) andalso (P2 =< (PauseTo + 2))).
 
