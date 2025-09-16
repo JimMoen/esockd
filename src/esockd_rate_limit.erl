@@ -64,6 +64,22 @@ info(#bucket{rate = Rate, burst = Burst, tokens = Tokens, time = Lastime}) ->
 %% if Tokens < Limit => P = 0;
 %% if Tokens = Limit => P = 1/r;
 %% if Tokens > Limit => P = (Tokens-Limit)/r
+%% --------------------------------------------------------------------
+%% Note on accuracy:
+%% If the time difference between two checks is very short,
+%% the number of tokens generated during that time difference may be a decimal less than 1.
+%% and round(TokenSum) would round up.
+%%
+%% For example:
+%% At a token generation rate of 50T/s, only 0.5 tokens can be generated in 10ms.
+%% RealLimit
+%%     = min(Burst, Remaining + round((Rate * (Now - Lastime)) / 1000))
+%%     = min(50, 0 + round(0.5))
+%%     = 1
+%% To ensure accuracy, ensure that at least 1 token is generated in 1ms.
+%%
+%% You can multiply both the token generation rate and the number of tokens
+%% consumed by a multiplier (e.g., 1000) to improve accuracy.
 -spec(check(pos_integer(), bucket()) -> {non_neg_integer(), bucket()}).
 check(Tokens, Bucket) ->
     check(Tokens, erlang:system_time(milli_seconds), Bucket).
