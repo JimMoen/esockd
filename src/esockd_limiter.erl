@@ -111,25 +111,53 @@ lookup(Name) ->
     end.
 
 -spec(consume(bucket_name())
-      -> {Remaing :: integer(), PasueMillSec :: integer()}).
+      -> {Remaining :: integer(), PasueMillSec :: integer()}).
 consume(Name) ->
     consume(Name, 1).
 
 -spec(consume(bucket_name(), pos_integer()) -> {integer(), integer()}).
 consume(Name, Tokens) when is_integer(Tokens), Tokens > 0 ->
-    try ets:update_counter(?TAB, {tokens, Name}, {2, -Tokens, 0, 0}) of
-        0 -> {0, pause_time(Name, erlang:system_time(millisecond))};
-        I -> {I, 0}
+    try ets:update_counter(?TAB, {tokens, Name}, {2, -Tokens}) of
+        Remaining when Remaining > 0 ->
+            %% enough tokens, no need to pause
+            {Remaining, 0};
+        Remaining ->
+            %% 0 or negative, not enough tokens. But it has indeed been consumed,
+            %% which means the token is borrowed from the future. We need to pause to that time.
+            {Remaining, pause_time(Name, time_now(), Remaining)}
     catch
         error:badarg -> {1, 0}
     end.
 
 %% @private
-pause_time(Name, Now) ->
+-spec pause_time(bucket_name(), pos_integer(), neg_integer() | 0) -> pos_integer().
+pause_time(Name, Now, Remaining) ->
     case ets:lookup(?TAB, {bucket, Name}) of
         [] -> 1000; %% Pause 1 second if the bucket is deleted.
-        [{_Bucket, _Capacity, Interval, LastTime}] ->
-            max(1, LastTime + (Interval * 1000) - Now)
+        [{_Bucket, Capacity, Interval, LastTime}] ->
+            %% Remaining might negative or zero.
+            %% In any case, this means that the token in this cycle has been exhausted,
+            %% and the current caller must at least pause until the next Token generation cycle
+            %% BorrowFrom = 1: token borrowed from next cycle
+            %% BorrowFrom = 2: token borrowed from next next cycle
+            %% ...etc
+            %%
+            %% AND NOTE:
+            %% 1. The number of consumers is limited
+            %% 2. The number of Tokens increased at a fixed rate
+            %% Therefore, consumers are always paused in turn, and the `Pause` value does
+            %% not increase indefinitely.
+            BorrowFrom = (abs(Remaining) div Capacity) + 1,
+
+            %% The `Now` might be slightly larger than `LastTime` due to concurrent access and
+            %% function execution time.
+            %% But we always take `LastTime` as the standard, because it always increases in fixed steps.
+            %%
+            %% In this case, the following `Pause` value might be zero or negative,
+            %% We still consider it to be consuming tokens from the cycle before the `LastTime`.
+            %% And since `LastTime` will be updated immediately, we pause for at least 1ms.
+            PauseTime = LastTime + (BorrowFrom * Interval * 1000) - Now,
+            max(1, PauseTime)
     end.
 
 -spec(delete(bucket_name()) -> ok).
@@ -179,19 +207,18 @@ handle_info({timeout, Timer, countdown}, State = #{countdown := Countdown, timer
         maps:fold(
             fun(Key = {bucket, Name}, 1, {AccIn, _}) ->
                 [{_Key, Capacity, Interval, LastTime}] = ets:lookup(?TAB, Key),
-                    %% Generate tokens in this interval, the current tokens might be negative
-                    %% (already borrowed by previous interval), add the capacity to it and set overflow
-                    %% threshold as max capacity.
-
-                    %% Do not tolerate the time consumption of function execution
-                    %% Otherwise, the diff between LastTime and ThisTime may exceed 1000ms.
-                    %% Update incrementing should be strict as 1000ms,
-                    %% But the `Now` is a little bit later than `LastTime + 1000` due to
-                    %% function execution time.
+                    %% Intolerant function execution time deviation.
+                    %% The `LastTime` value must be updated strictly in milliseconds using Interval * 1000.
+                    %%
+                    %% Taking this into account, `schedule_time/2` is used to calculate the time of the next update.
+                    %% And the `StrictNow` value calculated from any bucket can be used
+                    %% to calculate the duration of the timer.
                     StrictNow = LastTime + 1000,
-                    Incr = Threshold = SetValue = Capacity,
 
-                    %% Atomic update
+                    %% Generate tokens in interval, and the current tokens might be negative
+                    %% (already borrowed by previous interval), add the Capacity value to it and
+                    %% set an overflow threshold.
+                    Incr = Threshold = SetValue = Capacity,
                     _ = ets:update_counter(?TAB, {tokens, Name}, {2, Incr, Threshold, SetValue}),
                     true = ets:update_element(?TAB, {bucket, Name}, {4, StrictNow}),
 
