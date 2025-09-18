@@ -213,7 +213,7 @@ handle_info({timeout, Timer, countdown}, State = #{countdown := Countdown, timer
                     %% Taking this into account, `schedule_time/2` is used to calculate the time of the next update.
                     %% And the `StrictNow` value calculated from any bucket can be used
                     %% to calculate the duration of the timer.
-                    StrictNow = LastTime + 1000,
+                    StrictNow = LastTime + Interval * 1000,
 
                     %% Generate tokens in interval, and the current tokens might be negative
                     %% (already borrowed by previous interval), add the Capacity value to it and
