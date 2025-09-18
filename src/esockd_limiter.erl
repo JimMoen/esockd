@@ -174,17 +174,37 @@ handle_cast(Msg, State) ->
     {noreply, State}.
 
 handle_info({timeout, Timer, countdown}, State = #{countdown := Countdown, timer := Timer}) ->
-    Countdown1 = maps:fold(
-                   fun(Key = {bucket, Name}, 1, Map) ->
-                           [{_Key, Capacity, Interval, _LastTime}] = ets:lookup(?TAB, Key),
-                           true = ets:update_element(?TAB, {tokens, Name}, {2, Capacity}),
-                           true = ets:update_element(?TAB, {bucket, Name}, {4, erlang:system_time(millisecond)}),
-                           maps:put(Key, Interval, Map);
-                      (Key, C, Map) when C > 1 ->
-                           maps:put(Key, C-1, Map)
-                   end, #{}, Countdown),
+    Now = time_now(),
+    {Countdown1, StrictNow} =
+        maps:fold(
+            fun(Key = {bucket, Name}, 1, {AccIn, _}) ->
+                [{_Key, Capacity, Interval, LastTime}] = ets:lookup(?TAB, Key),
+                    %% Generate tokens in this interval, the current tokens might be negative
+                    %% (already borrowed by previous interval), add the capacity to it and set overflow
+                    %% threshold as max capacity.
+
+                    %% Do not tolerate the time consumption of function execution
+                    %% Otherwise, the diff between LastTime and ThisTime may exceed 1000ms.
+                    %% Update incrementing should be strict as 1000ms,
+                    %% But the `Now` is a little bit later than `LastTime + 1000` due to
+                    %% function execution time.
+                    StrictNow = LastTime + 1000,
+                    Incr = Threshold = SetValue = Capacity,
+
+                    %% Atomic update
+                    _ = ets:update_counter(?TAB, {tokens, Name}, {2, Incr, Threshold, SetValue}),
+                    true = ets:update_element(?TAB, {bucket, Name}, {4, StrictNow}),
+
+                    {AccIn#{Key => Interval}, StrictNow};
+               (Key, C, {AccIn, StrictNow}) when C > 1 ->
+                    {AccIn#{Key => C - 1}, StrictNow}
+            end,
+            {#{}, undefined},
+            Countdown
+        ),
+    ScheduleTime = schedule_time(Now, StrictNow),
     NState = State#{countdown := Countdown1, timer := undefined},
-    {noreply, ensure_countdown_timer(NState)};
+    {noreply, ensure_countdown_timer(NState, ScheduleTime)};
 
 handle_info(Info, State) ->
     error_logger:error_msg("Unexpected info: ~p~n", [Info]),
@@ -200,7 +220,21 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
+time_now() ->
+    erlang:system_time(millisecond).
+
+schedule_time(_Now, undefined) ->
+    1000;
+schedule_time(Now, StrictNow) ->
+    StrictNow + 1000 - Now.
+
 ensure_countdown_timer(State = #{timer := undefined}) ->
-    TRef = erlang:start_timer(timer:seconds(1), self(), countdown),
+    ensure_countdown_timer(State, timer:seconds(1));
+ensure_countdown_timer(State = #{timer := _TRef}) ->
+    State.
+
+ensure_countdown_timer(State = #{timer := undefined}, Time) when Time > 0 ->
+    TRef = erlang:start_timer(Time, self(), countdown),
     State#{timer := TRef};
-ensure_countdown_timer(State = #{timer := _TRef}) -> State.
+ensure_countdown_timer(State = #{timer := _TRef}, _Time) ->
+    State.
