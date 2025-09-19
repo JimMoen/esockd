@@ -212,6 +212,10 @@ handle_info({timeout, Timer, countdown}, State = #{countdown := Countdown, timer
                     %% Taking this into account, `schedule_time/2` is used to calculate the time of the next update.
                     %% And the `StrictNow` value calculated from any bucket can be used
                     %% to calculate the duration of the timer.
+                    %%
+                    %% Bucket creation does not always coincide with the current timer period.
+                    %% We accept a 1000ms deviation between `Now` and `StrictNow`,
+                    %% it still correctly generates tokens according to the period on a second scale.
                     StrictNow = LastTime + Interval * 1000,
 
                     %% Generate tokens in interval, and the current tokens might be negative
