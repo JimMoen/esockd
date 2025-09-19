@@ -111,25 +111,53 @@ lookup(Name) ->
     end.
 
 -spec(consume(bucket_name())
-      -> {Remaing :: integer(), PasueMillSec :: integer()}).
+      -> {Remaining :: integer(), PasueMillSec :: integer()}).
 consume(Name) ->
     consume(Name, 1).
 
 -spec(consume(bucket_name(), pos_integer()) -> {integer(), integer()}).
 consume(Name, Tokens) when is_integer(Tokens), Tokens > 0 ->
-    try ets:update_counter(?TAB, {tokens, Name}, {2, -Tokens, 0, 0}) of
-        0 -> {0, pause_time(Name, erlang:system_time(millisecond))};
-        I -> {I, 0}
+    try ets:update_counter(?TAB, {tokens, Name}, {2, -Tokens}) of
+        Remaining when Remaining > 0 ->
+            %% enough tokens, no need to pause
+            {Remaining, 0};
+        Remaining ->
+            %% 0 or negative, not enough tokens. But it has indeed been consumed,
+            %% which means the token is borrowed from the future. We need to pause to that time.
+            {Remaining, pause_time(Name, time_now(), Remaining)}
     catch
         error:badarg -> {1, 0}
     end.
 
 %% @private
-pause_time(Name, Now) ->
+-spec pause_time(bucket_name(), pos_integer(), neg_integer() | 0) -> pos_integer().
+pause_time(Name, Now, Remaining) ->
     case ets:lookup(?TAB, {bucket, Name}) of
         [] -> 1000; %% Pause 1 second if the bucket is deleted.
-        [{_Bucket, _Capacity, Interval, LastTime}] ->
-            max(1, LastTime + (Interval * 1000) - Now)
+        [{_Bucket, Capacity, Interval, LastTime}] ->
+            %% Remaining might negative or zero.
+            %% In any case, this means that the token in this cycle has been exhausted,
+            %% and the current caller must at least pause until the next Token generation cycle
+            %% BorrowFrom = 1: token borrowed from next cycle
+            %% BorrowFrom = 2: token borrowed from next next cycle
+            %% ...etc
+            %%
+            %% AND NOTE:
+            %% 1. The number of consumers is limited
+            %% 2. The number of Tokens increased at a fixed rate
+            %% Therefore, consumers are always paused in turn, and the `Pause` value does
+            %% not increase indefinitely.
+            BorrowFrom = (abs(Remaining) div Capacity) + 1,
+
+            %% The `Now` might be slightly larger than `LastTime` due to concurrent access and
+            %% function execution time.
+            %% But we always take `LastTime` as the standard, because it always increases in fixed steps.
+            %%
+            %% In this case, the following `Pause` value might be zero or negative,
+            %% We still consider it to be consuming tokens from the cycle before the `LastTime`.
+            %% And since `LastTime` will be updated immediately, we pause for at least 1ms.
+            PauseTime = LastTime + (BorrowFrom * Interval * 1000) - Now,
+            max(1, PauseTime)
     end.
 
 -spec(delete(bucket_name()) -> ok).
@@ -174,17 +202,40 @@ handle_cast(Msg, State) ->
     {noreply, State}.
 
 handle_info({timeout, Timer, countdown}, State = #{countdown := Countdown, timer := Timer}) ->
-    Countdown1 = maps:fold(
-                   fun(Key = {bucket, Name}, 1, Map) ->
-                           [{_Key, Capacity, Interval, _LastTime}] = ets:lookup(?TAB, Key),
-                           true = ets:update_element(?TAB, {tokens, Name}, {2, Capacity}),
-                           true = ets:update_element(?TAB, {bucket, Name}, {4, erlang:system_time(millisecond)}),
-                           maps:put(Key, Interval, Map);
-                      (Key, C, Map) when C > 1 ->
-                           maps:put(Key, C-1, Map)
-                   end, #{}, Countdown),
+    Now = time_now(),
+    {Countdown1, StrictNow} =
+        maps:fold(
+            fun(Key = {bucket, Name}, 1, {AccIn, _}) ->
+                [{_Key, Capacity, Interval, LastTime}] = ets:lookup(?TAB, Key),
+                    %% Intolerant function execution time deviation.
+                    %% The `LastTime` value must be updated strictly in milliseconds using Interval * 1000.
+                    %%
+                    %% Taking this into account, `schedule_time/2` is used to calculate the time of the next update.
+                    %% And the `StrictNow` value calculated from any bucket can be used
+                    %% to calculate the duration of the timer.
+                    %%
+                    %% Bucket creation does not always coincide with the current timer period.
+                    %% We accept a 1000ms deviation between `Now` and `StrictNow`,
+                    %% it still correctly generates tokens according to the period on a second scale.
+                    StrictNow = LastTime + Interval * 1000,
+
+                    %% Generate tokens in interval, and the current tokens might be negative
+                    %% (already borrowed by previous interval), add the Capacity value to it and
+                    %% set an overflow threshold.
+                    Incr = Threshold = SetValue = Capacity,
+                    _ = ets:update_counter(?TAB, {tokens, Name}, {2, Incr, Threshold, SetValue}),
+                    true = ets:update_element(?TAB, {bucket, Name}, {4, StrictNow}),
+
+                    {AccIn#{Key => Interval}, StrictNow};
+               (Key, C, {AccIn, StrictNow}) when C > 1 ->
+                    {AccIn#{Key => C - 1}, StrictNow}
+            end,
+            {#{}, undefined},
+            Countdown
+        ),
+    ScheduleTime = schedule_time(Now, StrictNow),
     NState = State#{countdown := Countdown1, timer := undefined},
-    {noreply, ensure_countdown_timer(NState)};
+    {noreply, ensure_countdown_timer(NState, ScheduleTime)};
 
 handle_info(Info, State) ->
     error_logger:error_msg("Unexpected info: ~p~n", [Info]),
@@ -200,7 +251,21 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
+time_now() ->
+    erlang:system_time(millisecond).
+
+schedule_time(_Now, undefined) ->
+    1000;
+schedule_time(Now, StrictNow) ->
+    StrictNow + 1000 - Now.
+
 ensure_countdown_timer(State = #{timer := undefined}) ->
-    TRef = erlang:start_timer(timer:seconds(1), self(), countdown),
+    ensure_countdown_timer(State, timer:seconds(1));
+ensure_countdown_timer(State = #{timer := _TRef}) ->
+    State.
+
+ensure_countdown_timer(State = #{timer := undefined}, Time) when Time > 0 ->
+    TRef = erlang:start_timer(Time, self(), countdown),
     State#{timer := TRef};
-ensure_countdown_timer(State = #{timer := _TRef}) -> State.
+ensure_countdown_timer(State = #{timer := _TRef}, _Time) ->
+    State.

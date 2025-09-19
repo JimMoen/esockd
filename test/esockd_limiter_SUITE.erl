@@ -96,15 +96,37 @@ t_consume(_) ->
     #{tokens := 9} = esockd_limiter:lookup(bucket),
     {5, 0} = esockd_limiter:consume(bucket, 4),
     #{tokens := 5} = esockd_limiter:lookup(bucket),
-    {0, PauseTime} = esockd_limiter:consume(bucket, 5),
-    ?assertEqual(PauseTime =< 2000 andalso PauseTime >= 1900, true),
+    {0, PauseTime1} = esockd_limiter:consume(bucket, 5),
+    ?assertEqual(PauseTime1 =< 2000 andalso PauseTime1 >= 1900, true),
 
-    #{tokens := 0} = esockd_limiter:lookup(bucket),
+    {-1, PauseTime2} = esockd_limiter:consume(bucket, 1),
+    %% borrow token from next interval, but havn't exhausted the whole next interval
+    %% pause to next interval is enough
+    ?assertEqual(PauseTime2 =< 2000 andalso PauseTime2 >= 1900, true),
+    #{tokens := -1} = esockd_limiter:lookup(bucket),
+
     ok = timer:sleep(1000),
-    #{tokens := 0} = esockd_limiter:lookup(bucket),
+    #{tokens := -1} = esockd_limiter:lookup(bucket),
+
     ok = timer:sleep(1020),
+    #{tokens := 9} = esockd_limiter:lookup(bucket),
+
+    {4, 0} = esockd_limiter:consume(bucket, 5),
+    #{tokens := 4} = esockd_limiter:lookup(bucket),
+
+    {-11, PauseTime3} = esockd_limiter:consume(bucket, 15),
+    #{tokens := -11} = esockd_limiter:lookup(bucket),
+    %% borrow token from next interval, and exhausted the whole next interval
+    %% should pause for 2 intervals
+    ?assertEqual(PauseTime3 =< 4000 andalso PauseTime3 >= 3900, true),
+    ok = timer:sleep(2100),
+    %% after 1 interval
+    #{tokens := -1} = esockd_limiter:lookup(bucket),
+    ok = timer:sleep(2100),
+    #{tokens := 9} = esockd_limiter:lookup(bucket),
+    ok = timer:sleep(2100),
     #{tokens := 10} = esockd_limiter:lookup(bucket),
-    {5, 0} = esockd_limiter:consume(bucket, 5),
+
     {1, 0} = esockd_limiter:consume(notexisted, 1),
     ok = esockd_limiter:stop().
 
