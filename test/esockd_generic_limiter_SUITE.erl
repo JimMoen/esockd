@@ -61,11 +61,32 @@ t_consume(_) ->
     {ok, Limiter3} = esockd_generic_limiter:consume(4, Limiter2),
     #{tokens := 5} = esockd_limiter:lookup(bucket),
 
-    {pause, PauseTime, Limiter4} = esockd_limiter:consume(6, Limiter3),
-    ?assertEqual(PauseTime =< 2000 andalso PauseTime >= 1900, true),
+    {pause, P1, Limiter4} = esockd_limiter:consume(5, Limiter3),
+    #{tokens := 0} = esockd_limiter:lookup(bucket),
+    %% tokens exhausted, need pause to next interval
+    ?assertEqual(1900 =< P1 andalso P1 =< 2000 , true),
 
-    timer:sleep(PauseTime + 100),
-    {ok, _Limiter5} = esockd_limiter:consume(6, Limiter4),
+    {pause, P2, Limiter5} = esockd_limiter:consume(6, Limiter4),
+    #{tokens := -6} = esockd_limiter:lookup(bucket),
+    %% borrowed tokens from next interval, but not exhausted next
+    %% pause to next is enough
+    ?assertEqual(1900 =< P2 andalso P2 =< 2000, true),
+
+    {pause, P3, Limiter6} = esockd_limiter:consume(6, Limiter5),
+    #{tokens := -12} = esockd_limiter:lookup(bucket),
+    %% the tokens in next interval is exhausted,
+    %% need pause to next next interval
+    ?assertEqual(3900 =< P3 andalso P3 =< 4000, true),
+
+    %% after 1 interval, generate 10 tokens but still not enough
+    timer:sleep(2300),
+    #{tokens := -2} = esockd_limiter:lookup(bucket),
+
+    %% after 2 intervals, generate 20 tokens, now have 8 tokens
+    timer:sleep(2300),
+    {ok, _Limiter7} = esockd_limiter:consume(6, Limiter6),
+    %% after consume, still have 2 tokens
+    #{tokens := 2} = esockd_limiter:lookup(bucket),
     ok = esockd_limiter:stop().
 
 t_undefined(_) ->
