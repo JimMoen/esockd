@@ -111,7 +111,7 @@ consume(Name) ->
 %%             (pos_integer(), esockd_generic_limiter:limiter()) -> esockd_generic_limiter:co
 consume(Tokens, #{name := Name} = Limiter) ->
     case consume(Name, Tokens) of
-        {0, PauseTime} ->
+        {Remaining, PauseTime} when Remaining =< 0 ->
             {pause, PauseTime, Limiter};
         _ ->
             {ok, Limiter}
