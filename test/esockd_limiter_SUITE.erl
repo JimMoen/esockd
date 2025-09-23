@@ -113,6 +113,29 @@ t_consume(_) ->
     {1, 0} = esockd_limiter:consume(notexisted, 1),
     ok = esockd_limiter:stop().
 
+t_strict_lasttime_update(_) ->
+    Milliseconds = 1000,
+    {ok, _} = esockd_limiter:start_link(),
+    ok = esockd_limiter:create(bucket, 10, 2),
+    #{name     := bucket,
+      capacity := 10,
+      interval := Interval,
+      tokens   := 10,
+      lasttime := L0
+     } = esockd_limiter:lookup(bucket),
+
+    ok = timer:sleep(Milliseconds + 100),
+    #{lasttime := L1} = esockd_limiter:lookup(bucket),
+    ?assertEqual(L1, L0),
+
+    ok = timer:sleep(Milliseconds + 100),
+    #{lasttime := L2} = esockd_limiter:lookup(bucket),
+    ?assertEqual(L2, L1 + (Interval * Milliseconds)),
+
+    ok = timer:sleep(2 * (Milliseconds + 100)),
+    #{lasttime := L3} = esockd_limiter:lookup(bucket),
+    ?assertEqual(L3, L2 + (Interval * Milliseconds)).
+
 t_concurrent_consume(_) ->
     {ok, _} = esockd_limiter:start_link(),
     ConnRate = 10000,
